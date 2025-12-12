@@ -1,0 +1,92 @@
+---
+title: "ghosts"
+author: "julia nilsson"
+format: html
+editor: visual
+---
+
+```{r}
+library(vroom)
+library(lubridate)
+library(tidyverse)
+library(tidymodels)
+library(recipes)
+library(embed)
+library(dials)
+```
+
+```{r}
+#"C:\Users\julia\OneDrive - Brigham Young University\Desktop\stat 348\ghouls-goblins-and-ghosts-boo\test.csv"
+
+ghosttrain <- vroom("C:/Users/julia/OneDrive - Brigham Young University/Desktop/stat 348/ghouls-goblins-and-ghosts-boo/train.csv")
+
+ghosttrain <- ghosttrain %>% mutate(type = factor(type))
+
+ghosttest <- vroom("C:/Users/julia/OneDrive - Brigham Young University/Desktop/stat 348/ghouls-goblins-and-ghosts-boo/test.csv")
+```
+
+```{r}
+ghostrecipe <- recipe(type ~ ., data = ghosttrain) %>%
+ # step_mutate_at(all_numeric_predictors(), fn=factor) %>%
+  step_other(all_nominal_predictors(), threshold = 0.001) %>% 
+  step_dummy(all_nominal_predictors()) %>%
+    update_role(id, new_role = "ID") |>
+  step_rm(id) |>
+  step_unknown(all_nominal_predictors()) |>
+  step_impute_mode(all_nominal_predictors()) |>
+    step_zv(all_predictors()) |>
+  step_normalize(all_numeric_predictors()) 
+
+
+baked_train <- bake(prep(ghostrecipe), ghosttrain)
+```
+
+```{r}
+svmLinear <- svm_linear(cost = tune()) %>%
+  set_mode("classification") %>%
+  set_engine("kernlab")
+
+linear_wf <- workflow() |>
+  add_recipe(ghostrecipe) |>
+  add_model(svmLinear)
+
+linear_grid_of_tuning_params <- grid_regular(
+  cost(range = c(0.01, 1)),
+  levels = 5
+)
+```
+
+```{r}
+folds <- vfold_cv(ghosttrain, v = 5)
+
+
+linear_CV_results <- linear_wf |>
+  tune_grid(
+    resamples = folds,
+    grid = linear_grid_of_tuning_params,
+    metrics = metric_set(accuracy))
+
+linear_bestTune <- linear_CV_results |>
+  select_best(metric = "accuracy")
+
+linear_final_wf <- linear_wf |>
+  finalize_workflow(linear_bestTune) |>
+  fit(data = ghosttrain)
+
+linear_class_preds <- predict(linear_final_wf, 
+                           new_data = ghosttest, 
+                           type = "class")
+
+```
+
+```{r}
+submission_linear <- ghosttest |>
+  select(id) |>
+  bind_cols(linear_class_preds) |>
+  rename(type = .pred_class)
+
+vroom_write(submission_linear, 
+            "C:/Users/julia/OneDrive - Brigham Young University/Desktop/stat 348/ghouls-goblins-and-ghosts-boo/ghostlinearsvmresults.csv",
+            delim = ",")
+
+```
